@@ -29,31 +29,35 @@ class ArabxCamProvider : MainAPI() {
                     val a = item.selectFirst("a") ?: return@mapNotNull null
                     val href = a.attr("href") ?: return@mapNotNull null
                     val title = item.selectFirst("strong.title")?.text()?.trim() ?: a.attr("title")
-                    val poster = item.selectFirst("img.thumb")?.let { it.attr("data-original").ifBlank { it.attr("src") } }
+                    val poster = item.selectFirst("img.thumb")?.let {
+                        it.attr("data-original").ifBlank { it.attr("data-webp").ifBlank { it.attr("src") } }
+                    }
                     val rating = item.selectFirst("div.rating")?.text()?.trim()?.replace("%", "")
                     newMovieSearchResponse(title, href, TvType.NSFW) {
                         this.posterUrl = poster
                         if (!rating.isNullOrBlank()) this.score = Score.from(rating, 100)
                     }
-                } catch (e: Exception) { null }
+                } catch (_: Exception) { null }
             }
             newHomePageResponse(request.name, items)
-        } catch (e: Exception) { null }
+        } catch (_: Exception) { null }
     }
 
     override suspend fun search(query: String): List<SearchResponse>? {
         return try {
-            val doc = app.get("$mainUrl/search/videos/?q=$query", referer = mainUrl).document
+            val doc = app.get("$mainUrl/search/?q=$query", referer = mainUrl).document
             doc.select("div.item").mapNotNull { item ->
                 try {
                     val a = item.selectFirst("a") ?: return@mapNotNull null
                     val href = a.attr("href") ?: return@mapNotNull null
                     val title = item.selectFirst("strong.title")?.text()?.trim() ?: a.attr("title")
-                    val poster = item.selectFirst("img.thumb")?.let { it.attr("data-original").ifBlank { it.attr("src") } }
+                    val poster = item.selectFirst("img.thumb")?.let {
+                        it.attr("data-original").ifBlank { it.attr("data-webp").ifBlank { it.attr("src") } }
+                    }
                     newMovieSearchResponse(title, href, TvType.NSFW) { this.posterUrl = poster }
-                } catch (e: Exception) { null }
+                } catch (_: Exception) { null }
             }
-        } catch (e: Exception) { null }
+        } catch (_: Exception) { null }
     }
 
     override suspend fun load(url: String): LoadResponse? {
@@ -65,8 +69,12 @@ class ArabxCamProvider : MainAPI() {
             val poster = doc.selectFirst("meta[property=og:image]")?.attr("content")
             val description = doc.selectFirst("meta[name=description]")?.attr("content")
             val tags = doc.select("meta[name=keywords]")?.attr("content")?.split(",")?.map { it.trim() }?.take(6)
-            newMovieLoadResponse(title, url, TvType.NSFW, url) { this.posterUrl = poster; this.plot = description; this.tags = tags }
-        } catch (e: Exception) { null }
+            newMovieLoadResponse(title, url, TvType.NSFW, url) {
+                this.posterUrl = poster
+                this.plot = description
+                this.tags = tags
+            }
+        } catch (_: Exception) { null }
     }
 
     override suspend fun loadLinks(
@@ -76,35 +84,54 @@ class ArabxCamProvider : MainAPI() {
         return try {
             val doc = app.get(data, referer = mainUrl).document
             var found = false
-            
-            // Method 1: flashvars
+
+            // Method 1: flashvars (for KVS-based sites)
             doc.select("script").forEach { element ->
                 val script = element.html()
                 if (script.contains("flashvars")) {
-                    val v1 = rgx(script, "video_url"); val v2 = rgx(script, "video_alt_url"); val v3 = rgx(script, "video_alt_url2")
-                    val q1 = rgx(script, "video_url_text") ?: "360p"; val q2 = rgx(script, "video_alt_url_text") ?: "480p"; val q3 = rgx(script, "video_alt_url2_text") ?: "720p"
-                    v1?.let { lnk(it, q1, callback); found = true }; v2?.let { lnk(it, q2, callback); found = true }; v3?.let { lnk(it, q3, callback); found = true }
+                    val v1 = rgx(script, "video_url")
+                    val v2 = rgx(script, "video_alt_url")
+                    val v3 = rgx(script, "video_alt_url2")
+                    val q1 = rgx(script, "video_url_text") ?: "360p"
+                    val q2 = rgx(script, "video_alt_url_text") ?: "480p"
+                    val q3 = rgx(script, "video_alt_url2_text") ?: "720p"
+                    v1?.let { lnk(it, q1, callback); found = true }
+                    v2?.let { lnk(it, q2, callback); found = true }
+                    v3?.let { lnk(it, q3, callback); found = true }
                 }
             }
             if (found) return true
-            
-            // Method 2: iframe embed - pass URL to player
+
+            // Method 2: iframe embed → delegate to PlayerIzExtractor (handles obfuscated eval JS)
             val iframe = doc.selectFirst("div.embed-wrap iframe")
             if (iframe != null) {
                 val iframeUrl = iframe.attr("src")
                 if (iframeUrl.isNotBlank()) {
-                    callback(newExtractorLink(source = name, name = name, url = iframeUrl, type = ExtractorLinkType.M3U8) { this.referer = data; this.quality = getQualityFromName("720p") })
+                    loadExtractor(iframeUrl, data, subtitleCallback, callback)
                     return true
                 }
             }
-            
+
             // Method 3: HTML5 video sources
             doc.select("video source").forEach { src ->
-                val url = src.attr("src")
-                if (url.isNotBlank()) { lnk(url, qlt(url), callback); found = true }
+                val srcUrl = src.attr("src")
+                if (srcUrl.isNotBlank()) {
+                    val quality = when {
+                        srcUrl.contains("1080p") -> "1080p"
+                        srcUrl.contains("720p") -> "720p"
+                        srcUrl.contains("480p") -> "480p"
+                        srcUrl.contains("360p") -> "360p"
+                        else -> "360p"
+                    }
+                    val type = if (srcUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                    callback(newExtractorLink(
+                        source = name, name = name, url = srcUrl, type = type
+                    ) { this.referer = mainUrl; this.quality = getQualityFromName(quality) })
+                    found = true
+                }
             }
             found
-        } catch (e: Exception) { false }
+        } catch (_: Exception) { false }
     }
 
     private fun rgx(script: String, key: String): String? {
@@ -112,11 +139,15 @@ class ArabxCamProvider : MainAPI() {
         return match.groupValues[1].ifBlank { null }
     }
 
-    private fun qlt(url: String): String = when { url.contains("720p") -> "720p"; url.contains("480p") -> "480p"; url.contains("360p") -> "360p"; url.contains("1080p") -> "1080p"; else -> "360p" }
-
-    private fun cln(url: String): String = when { url.startsWith("function/0/") -> url.removePrefix("function/0/"); url.startsWith("//") -> "https:$url"; else -> url }
+    private fun cln(url: String): String = when {
+        url.startsWith("function/0/") -> url.removePrefix("function/0/")
+        url.startsWith("//") -> "https:$url"
+        else -> url
+    }
 
     private suspend fun lnk(url: String, quality: String, callback: (ExtractorLink) -> Unit) {
-        callback(newExtractorLink(source = name, name = name, url = cln(url), type = ExtractorLinkType.VIDEO) { this.referer = mainUrl; this.quality = getQualityFromName(quality) })
+        callback(newExtractorLink(
+            source = name, name = name, url = cln(url), type = ExtractorLinkType.VIDEO
+        ) { this.referer = mainUrl; this.quality = getQualityFromName(quality) })
     }
 }
