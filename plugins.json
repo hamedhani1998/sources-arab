@@ -2,7 +2,7 @@
  {
   "apiVersion": 1,
   "repositoryUrl": "https://github.com/hamedhani1998/sources-arab",
-  "fileSize": 14586,
+  "fileSize": 14835,
   "status": 1,
   "language": "ar",
   "authors": [
@@ -11,7 +11,7 @@
   "tvTypes": [
    "NSFW"
   ],
-  "version": 3,
+  "version": 4,
   "internalName": "ArabPluginsExtractors",
   "description": "مشغلات مخصصة للمواقع العربية",
   "url": "https://github.com/hamedhani1998/sources-arab/raw/refs/heads/main/build/extractors.cs3",

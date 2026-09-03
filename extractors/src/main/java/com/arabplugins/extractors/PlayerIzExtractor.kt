@@ -18,7 +18,8 @@ class PlayerIzExtractor : ExtractorApi() {
     ) {
         try {
             Log.d("PlayerIz", "getUrl url=$url referer=$referer")
-            val res = app.get(url, referer = referer ?: mainUrl)
+            val ref = safeReferer(referer)
+            val res = app.get(url, referer = ref)
             val html = res.text
             val doc = res.document
             Log.d("PlayerIz", "fetch htmlLen=${html.length} head=${html.take(160).replace("\n", " ")}")
@@ -36,7 +37,7 @@ class PlayerIzExtractor : ExtractorApi() {
                     callback(newExtractorLink(
                         source = name, name = name, url = m.value,
                         type = ExtractorLinkType.M3U8
-                    ) { this.referer = referer ?: mainUrl })
+                    ) { this.referer = ref })
                     return
                 }
                 Log.d("PlayerIz", "decoded m3u8 count=$n mp4Count=${Regex("""https?://[^\s"'<>]+\.mp4[^\s"'<>]*""").findAll(decoded).count()}")
@@ -45,7 +46,7 @@ class PlayerIzExtractor : ExtractorApi() {
                     callback(newExtractorLink(
                         source = name, name = name, url = decodeUrl(m.value),
                         type = ExtractorLinkType.VIDEO
-                    ) { this.referer = referer ?: mainUrl })
+                    ) { this.referer = ref })
                     return
                 }
             }
@@ -57,7 +58,7 @@ class PlayerIzExtractor : ExtractorApi() {
                 callback(newExtractorLink(
                     source = name, name = name, url = decodeUrl(videoUrlMatch.groupValues[1]),
                     type = ExtractorLinkType.VIDEO
-                ) { this.referer = referer ?: mainUrl })
+                ) { this.referer = ref })
                 return
             }
 
@@ -67,7 +68,7 @@ class PlayerIzExtractor : ExtractorApi() {
                 callback(newExtractorLink(
                     source = name, name = name, url = m3u8Match.groupValues[1],
                     type = ExtractorLinkType.M3U8
-                ) { this.referer = referer ?: mainUrl })
+                ) { this.referer = ref })
                 return
             }
 
@@ -77,7 +78,7 @@ class PlayerIzExtractor : ExtractorApi() {
                 callback(newExtractorLink(
                     source = name, name = name, url = mp4Match.groupValues[1],
                     type = ExtractorLinkType.VIDEO
-                ) { this.referer = referer ?: mainUrl })
+                ) { this.referer = ref })
                 return
             }
 
@@ -88,7 +89,7 @@ class PlayerIzExtractor : ExtractorApi() {
                     val type = if (srcUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                     callback(newExtractorLink(
                         source = name, name = name, url = srcUrl, type = type
-                    ) { this.referer = referer ?: mainUrl })
+                    ) { this.referer = ref })
                     return
                 }
             }
@@ -99,7 +100,7 @@ class PlayerIzExtractor : ExtractorApi() {
                 val iframeUrl = iframe.attr("src")
                 if (iframeUrl.isNotBlank()) {
                     Log.d("PlayerIz", "delegating to iframe $iframeUrl")
-                    loadExtractor(iframeUrl, referer, subtitleCallback, callback)
+                    loadExtractor(iframeUrl, ref, subtitleCallback, callback)
                     return
                 }
             }
@@ -215,6 +216,15 @@ class PlayerIzExtractor : ExtractorApi() {
         if (s.length >= 2 && s.startsWith("'") && s.endsWith("'"))
             s = s.substring(1, s.length - 1)
         return s.replace("\\'", "'").replace("\\\\", "\\")
+    }
+
+    /** Pin referer to the ASCII-safe origin (scheme://host). Arabic paths in the
+     *  referer crash the HTTP stack (IllegalArgumentException) before any request
+     *  is made, which made getUrl return no links. scheme://host is enough for
+     *  playeriz.com / s1.playiri.com. */
+    private fun safeReferer(r: String?): String {
+        val s = r ?: mainUrl
+        return Regex("https?://[^/]+").find(s)?.value ?: mainUrl
     }
 
     private fun decodeUrl(url: String): String {
