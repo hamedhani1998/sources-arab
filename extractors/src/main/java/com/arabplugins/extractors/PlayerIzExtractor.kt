@@ -1,6 +1,7 @@
 package com.arabplugins.extractors
 
 import android.util.Base64
+import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 
@@ -16,21 +17,29 @@ class PlayerIzExtractor : ExtractorApi() {
         callback: (ExtractorLink) -> Unit
     ) {
         try {
+            Log.d("PlayerIz", "getUrl url=$url referer=$referer")
             val res = app.get(url, referer = referer ?: mainUrl)
             val html = res.text
             val doc = res.document
+            Log.d("PlayerIz", "fetch htmlLen=${html.length} head=${html.take(160).replace("\n", " ")}")
+            Log.d("PlayerIz", "challenge? cf=${html.contains("cf-challenge", true) || html.contains("just a moment", true) || html.contains("captcha", true)} cloudflare=${html.contains("cloudflare", true)}")
 
             // Method 0: Decode packed/obfuscated eval JS (used by playeriz.com)
             val decoded = unpackEval(html)
+            Log.d("PlayerIz", "unpackEval decoded=${decoded != null} decLen=${decoded?.length}")
             if (decoded != null) {
                 val m3u8Urls = Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""").findAll(decoded)
+                var n = 0
                 for (m in m3u8Urls) {
+                    Log.d("PlayerIz", "m3u8[${n}]=${m.value}")
+                    n++
                     callback(newExtractorLink(
                         source = name, name = name, url = m.value,
                         type = ExtractorLinkType.M3U8
                     ) { this.referer = referer ?: mainUrl })
                     return
                 }
+                Log.d("PlayerIz", "decoded m3u8 count=$n mp4Count=${Regex("""https?://[^\s"'<>]+\.mp4[^\s"'<>]*""").findAll(decoded).count()}")
                 val mp4Urls = Regex("""https?://[^\s"'<>]+\.mp4[^\s"'<>]*""").findAll(decoded)
                 for (m in mp4Urls) {
                     callback(newExtractorLink(
@@ -89,12 +98,14 @@ class PlayerIzExtractor : ExtractorApi() {
             if (iframe != null) {
                 val iframeUrl = iframe.attr("src")
                 if (iframeUrl.isNotBlank()) {
+                    Log.d("PlayerIz", "delegating to iframe $iframeUrl")
                     loadExtractor(iframeUrl, referer, subtitleCallback, callback)
                     return
                 }
             }
+            Log.d("PlayerIz", "**** NO LINKS: all methods failed, htmlLen=${html.length}")
         } catch (e: Exception) {
-            // Handle error
+            Log.d("PlayerIz", "getUrl EXCEPTION ${e::class.simpleName}: ${e.message}")
         }
     }
 
@@ -109,7 +120,11 @@ class PlayerIzExtractor : ExtractorApi() {
         return try {
             val marker = "eval(function(p,a,c,k,e,d)"
             val start = html.indexOf(marker)
-            if (start < 0) return null
+            if (start < 0) {
+                Log.d("PlayerIz", "unpack: marker NOT found")
+                return null
+            }
+            Log.d("PlayerIz", "unpack: marker found at $start")
 
             // Opening paren of the whole eval(...) is the '(' right after "eval"
             val open = start + 4
@@ -136,21 +151,22 @@ class PlayerIzExtractor : ExtractorApi() {
                 }
                 i++
             }
-            if (end < 0) return null
+            if (end < 0) { Log.d("PlayerIz", "unpack: no matching close paren"); return null }
 
             // The call args sit in the final "(...)" group, right after "...}("
             val callText = html.substring(start, end + 1)
             val funcEnd = callText.lastIndexOf("}(")
-            if (funcEnd < 0) return null
+            if (funcEnd < 0) { Log.d("PlayerIz", "unpack: no '}(' boundary"); return null }
             val argsStr = callText.substring(funcEnd + 2, callText.length - 1)
 
             val args = splitTopLevel(argsStr)
-            if (args.size < 4) return null
+            if (args.size < 4) { Log.d("PlayerIz", "unpack: args too few=${args.size}"); return null }
 
             val packed = unescapeEval(args[0])
             val base = args[1].trim().toInt()
             val count = args[2].trim().toInt()
             val dict = unescapeEval(args[3]).split('|')
+            Log.d("PlayerIz", "unpack: packedLen=${packed.length} base=$base count=$count dictSize=${dict.size}")
 
             // Unpacking algorithm: for each index from count-1 down to 0,
             // convert index to base-N string, replace \b{baseN}\b with dict[index]
@@ -160,8 +176,10 @@ class PlayerIzExtractor : ExtractorApi() {
                 val key = j.toString(base)
                 result = result.replace(Regex("\\b" + Regex.escape(key) + "\\b"), dict[j])
             }
+            Log.d("PlayerIz", "unpack: done resultLen=${result.length}")
             result
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.d("PlayerIz", "unpack: EXCEPTION ${e::class.simpleName}: ${e.message}")
             null
         }
     }
