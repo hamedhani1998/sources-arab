@@ -1,0 +1,6 @@
+{
+ "name": "Arab Adult Sources",
+ "description": "مصادر عربية للبالغين - إضافات Cloudstream",
+ "manifestVersion": 1,
+ "pluginLists": ["https://raw.githubusercontent.com/hamedhani1998/sources-arab/refs/heads/main/plugins.json"]
+}
