@@ -32,8 +32,10 @@ class ArabxCamProvider : MainAPI() {
                     val a = item.selectFirst("a") ?: return@mapNotNull null
                     val href = a.attr("href") ?: return@mapNotNull null
                     val title = item.selectFirst("strong.title")?.text()?.trim() ?: a.attr("title")
-                    val poster = item.selectFirst("img.thumb")?.let {
-                        it.attr("data-original").ifBlank { it.attr("data-webp").ifBlank { it.attr("src") } }
+                    val poster = item.selectFirst("img.thumb")?.let { img ->
+                        listOf("data-original", "data-src", "data-webp", "src").firstNotNullOfOrNull { attr ->
+                            img.attr(attr).takeIf { it.isNotBlank() && !it.contains("placeholder") }
+                        }?.let { u -> fixUrl(u) }
                     }
                     val rating = item.selectFirst("div.rating")?.text()?.trim()?.replace("%", "")
                     newMovieSearchResponse(title, href, TvType.NSFW) {
@@ -54,8 +56,10 @@ class ArabxCamProvider : MainAPI() {
                     val a = item.selectFirst("a") ?: return@mapNotNull null
                     val href = a.attr("href") ?: return@mapNotNull null
                     val title = item.selectFirst("strong.title")?.text()?.trim() ?: a.attr("title")
-                    val poster = item.selectFirst("img.thumb")?.let {
-                        it.attr("data-original").ifBlank { it.attr("data-webp").ifBlank { it.attr("src") } }
+                    val poster = item.selectFirst("img.thumb")?.let { img ->
+                        listOf("data-original", "data-src", "data-webp", "src").firstNotNullOfOrNull { attr ->
+                            img.attr(attr).takeIf { it.isNotBlank() && !it.contains("placeholder") }
+                        }?.let { u -> fixUrl(u) }
                     }
                     newMovieSearchResponse(title, href, TvType.NSFW) { this.posterUrl = poster }
                 } catch (_: Exception) { null }
@@ -102,7 +106,9 @@ class ArabxCamProvider : MainAPI() {
                         rgx(script, "video_alt_url2") to (rgx(script, "video_alt_url2_text") ?: "720p")
                     ).forEach { (url, q) ->
                         if (url != null && !url.contains("get_file")) {
-                            lnk(url, q, callback)
+                            // Ensure quality label has "p" suffix (e.g. "480" -> "480p")
+                            val quality = if (q.matches(Regex("\\d+"))) "${q}p" else q
+                            lnk(url, quality, callback)
                             found = true
                         }
                     }
@@ -198,5 +204,11 @@ class ArabxCamProvider : MainAPI() {
         callback(newExtractorLink(
             source = name, name = name, url = cln(url), type = ExtractorLinkType.VIDEO
         ) { this.referer = mainUrl; this.quality = getQualityFromName(quality) })
+    }
+
+    private fun fixUrl(url: String): String = when {
+        url.startsWith("//") -> "https:$url"
+        url.startsWith("/") -> "$mainUrl$url"
+        else -> url
     }
 }
