@@ -1,9 +1,11 @@
 package com.arabx.plugin
 
+import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 
 class ArabxCamProvider : MainAPI() {
+    private val TAG = "ArabxCam"
     override var name = "ArabX"
     override var mainUrl = "https://www.arabx.cam"
     override var lang = "ar"
@@ -82,11 +84,14 @@ class ArabxCamProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
+            Log.d(TAG, "loadLinks data=$data")
             val doc = app.get(data, referer = mainUrl).document
             var found = false
 
             // Method 1: flashvars (for KVS-based sites)
-            doc.select("script").forEach { element ->
+            val flashScripts = doc.select("script").filter { it.html().contains("flashvars") }
+            Log.d(TAG, "flashvars scripts=${flashScripts.size}")
+            flashScripts.forEach { element ->
                 val script = element.html()
                 if (script.contains("flashvars")) {
                     val v1 = rgx(script, "video_url")
@@ -106,14 +111,19 @@ class ArabxCamProvider : MainAPI() {
             val iframe = doc.selectFirst("div.embed-wrap iframe")
             if (iframe != null) {
                 val iframeUrl = iframe.attr("src")
+                Log.d(TAG, "iframe src=$iframeUrl")
                 if (iframeUrl.isNotBlank()) {
                     loadExtractor(iframeUrl, data, subtitleCallback, callback)
                     return true
                 }
+            } else {
+                Log.d(TAG, "no div.embed-wrap iframe")
             }
 
             // Method 3: HTML5 video sources
-            doc.select("video source").forEach { src ->
+            val vidSrcs = doc.select("video source")
+            Log.d(TAG, "video source tags=${vidSrcs.size}")
+            vidSrcs.forEach { src ->
                 val srcUrl = src.attr("src")
                 if (srcUrl.isNotBlank()) {
                     val quality = when {
@@ -130,8 +140,9 @@ class ArabxCamProvider : MainAPI() {
                     found = true
                 }
             }
+            Log.d(TAG, "loadLinks done found=$found")
             found
-        } catch (_: Exception) { false }
+        } catch (e: Exception) { Log.d(TAG, "loadLinks EXCEPTION ${e::class.simpleName}: ${e.message}"); false }
     }
 
     private fun rgx(script: String, key: String): String? {
