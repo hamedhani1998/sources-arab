@@ -151,9 +151,19 @@ class ArabxCamProvider : MainAPI() {
             Log.d(TAG, "direct mp4/m3u8 in text=${directUrls.count()}")
             directUrls.forEach { url ->
                 val type = if (url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                val quality = when {
+                    url.contains(".m3u8") -> null
+                    else -> Regex("""([0-9]{3,4}[piKk])""").find(url)?.groupValues?.get(1)
+                        ?: Regex("""(?:360|480|720|1080)p""").find(url)?.groupValues?.get(0)
+                        ?: "360p"
+                }
+                val qName = quality ?: ""
                 callback(newExtractorLink(
                     source = name, name = name, url = url, type = type
-                ) { this.referer = mainUrl })
+                ) {
+                    this.referer = mainUrl
+                    if (qName.isNotBlank()) this.quality = getQualityFromName(qName)
+                })
                 found = true
             }
             Log.d(TAG, "loadLinks done found=$found")
