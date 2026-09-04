@@ -89,24 +89,25 @@ class ArabxCamProvider : MainAPI() {
             val doc = app.get(data, referer = mainUrl).document
             var found = false
 
-            // Method 1: flashvars (for KVS-based sites)
+            // Method 1: flashvars (KVS) — skip broken get_file links (403).
+            // Do NOT return early: iframe/direct URLs may hold the real working link.
             val flashScripts = doc.select("script").filter { it.html().contains("flashvars") }
             Log.d(TAG, "flashvars scripts=${flashScripts.size}")
             flashScripts.forEach { element ->
                 val script = element.html()
                 if (script.contains("flashvars")) {
-                    val v1 = rgx(script, "video_url")
-                    val v2 = rgx(script, "video_alt_url")
-                    val v3 = rgx(script, "video_alt_url2")
-                    val q1 = rgx(script, "video_url_text") ?: "360p"
-                    val q2 = rgx(script, "video_alt_url_text") ?: "480p"
-                    val q3 = rgx(script, "video_alt_url2_text") ?: "720p"
-                    v1?.let { lnk(it, q1, callback); found = true }
-                    v2?.let { lnk(it, q2, callback); found = true }
-                    v3?.let { lnk(it, q3, callback); found = true }
+                    listOf(
+                        rgx(script, "video_url") to (rgx(script, "video_url_text") ?: "360p"),
+                        rgx(script, "video_alt_url") to (rgx(script, "video_alt_url_text") ?: "480p"),
+                        rgx(script, "video_alt_url2") to (rgx(script, "video_alt_url2_text") ?: "720p")
+                    ).forEach { (url, q) ->
+                        if (url != null && !url.contains("get_file")) {
+                            lnk(url, q, callback)
+                            found = true
+                        }
+                    }
                 }
             }
-            if (found) return true
 
             // Method 2: iframe embed → delegate to PlayerIzExtractor (handles obfuscated eval JS)
             val iframe = doc.selectFirst("div.embed-wrap iframe")
