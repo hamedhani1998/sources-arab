@@ -26,17 +26,14 @@ class ArabxCamProvider : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         return try {
             val url = "$mainUrl/${request.data}${if (page > 1) "page/$page/" else ""}"
+            Log.d(TAG, "getMainPage url=$url")
             val doc = app.get(url, referer = mainUrl).document
             val items = doc.select("div.item").mapNotNull { item ->
                 try {
                     val a = item.selectFirst("a") ?: return@mapNotNull null
                     val href = a.attr("href") ?: return@mapNotNull null
                     val title = item.selectFirst("strong.title")?.text()?.trim() ?: a.attr("title")
-                    val poster = item.selectFirst("img.thumb")?.let { img ->
-                        listOf("data-original", "data-src", "data-webp", "src").firstNotNullOfOrNull { attr ->
-                            img.attr(attr).takeIf { it.isNotBlank() && !it.contains("placeholder") }
-                        }?.let { u -> fixUrl(u) }
-                    }
+                    val poster = extractPoster(item)
                     val rating = item.selectFirst("div.rating")?.text()?.trim()?.replace("%", "")
                     newMovieSearchResponse(title, href, TvType.NSFW) {
                         this.posterUrl = poster
@@ -44,6 +41,7 @@ class ArabxCamProvider : MainAPI() {
                     }
                 } catch (_: Exception) { null }
             }
+            Log.d(TAG, "getMainPage items=${items.size}")
             newHomePageResponse(request.name, items)
         } catch (_: Exception) { null }
     }
@@ -56,11 +54,7 @@ class ArabxCamProvider : MainAPI() {
                     val a = item.selectFirst("a") ?: return@mapNotNull null
                     val href = a.attr("href") ?: return@mapNotNull null
                     val title = item.selectFirst("strong.title")?.text()?.trim() ?: a.attr("title")
-                    val poster = item.selectFirst("img.thumb")?.let { img ->
-                        listOf("data-original", "data-src", "data-webp", "src").firstNotNullOfOrNull { attr ->
-                            img.attr(attr).takeIf { it.isNotBlank() && !it.contains("placeholder") }
-                        }?.let { u -> fixUrl(u) }
-                    }
+                    val poster = extractPoster(item)
                     newMovieSearchResponse(title, href, TvType.NSFW) { this.posterUrl = poster }
                 } catch (_: Exception) { null }
             }
@@ -151,11 +145,13 @@ class ArabxCamProvider : MainAPI() {
             if (found) return true
 
             // Method 4: Direct mp4/m3u8 URLs in page text (max.arabx.cam / other hosts)
-            val allText = doc.select("script").joinToString("\n") { it.data() } +
-                "\n" + doc.html()
+            // Scan script contents only (not full HTML) to avoid picking up
+            // broken get_file links already in the DOM from flashvars.
+            val scriptTexts = doc.select("script").joinToString("\n") { it.data() }
             val directUrls = Regex("""https?://[^\s"'<>]+(?:\.mp4|m3u8)[^\s"'<>]*""")
-                .findAll(allText).map { it.value }.distinct()
-            Log.d(TAG, "direct mp4/m3u8 in text=${directUrls.count()}")
+                .findAll(scriptTexts).map { it.value }.distinct()
+                .filter { !it.contains("get_file") }
+            Log.d(TAG, "direct mp4/m3u8 in scripts=${directUrls.count()}")
             directUrls.forEach { url ->
                 val type = if (url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                 val quality = when {
@@ -210,5 +206,27 @@ class ArabxCamProvider : MainAPI() {
         url.startsWith("//") -> "https:$url"
         url.startsWith("/") -> "$mainUrl$url"
         else -> url
+    }
+
+    private fun extractPoster(item: org.jsoup.nodes.Element): String? {
+        // Try multiple img selectors and attributes
+        val img = item.selectFirst("img.thumb")
+            ?: item.selectFirst("img[data-original]")
+            ?: item.selectFirst("img[data-src]")
+            ?: item.selectFirst("img.lazy")
+            ?: item.selectFirst("img")
+        if (img == null) {
+            Log.d(TAG, "extractPoster: no img found in item")
+            return null
+        }
+        val poster = listOf("data-original", "data-src", "data-webp", "src")
+            .firstNotNullOfOrNull { attr ->
+                img.attr(attr).takeIf { it.isNotBlank() && !it.contains("placeholder") && !it.contains("data:image") }
+            }
+        if (poster.isNullOrBlank()) {
+            Log.d(TAG, "extractPoster: all attrs blank. HTML=${item.html().take(200)}")
+            return null
+        }
+        return fixUrl(poster)
     }
 }
