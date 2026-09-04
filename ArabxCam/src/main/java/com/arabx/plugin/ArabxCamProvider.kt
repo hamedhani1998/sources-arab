@@ -1,5 +1,6 @@
 package com.arabx.plugin
 
+import android.util.Base64
 import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
@@ -140,6 +141,21 @@ class ArabxCamProvider : MainAPI() {
                     found = true
                 }
             }
+            if (found) return true
+
+            // Method 4: Direct mp4/m3u8 URLs in page text (max.arabx.cam / other hosts)
+            val allText = doc.select("script").joinToString("\n") { it.data() } +
+                "\n" + doc.html()
+            val directUrls = Regex("""https?://[^\s"'<>]+(?:\.mp4|m3u8)[^\s"'<>]*""")
+                .findAll(allText).map { it.value }.distinct()
+            Log.d(TAG, "direct mp4/m3u8 in text=${directUrls.count()}")
+            directUrls.forEach { url ->
+                val type = if (url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                callback(newExtractorLink(
+                    source = name, name = name, url = url, type = type
+                ) { this.referer = mainUrl })
+                found = true
+            }
             Log.d(TAG, "loadLinks done found=$found")
             found
         } catch (e: Exception) { Log.d(TAG, "loadLinks EXCEPTION ${e::class.simpleName}: ${e.message}"); false }
@@ -150,10 +166,21 @@ class ArabxCamProvider : MainAPI() {
         return match.groupValues[1].ifBlank { null }
     }
 
-    private fun cln(url: String): String = when {
-        url.startsWith("function/0/") -> url.removePrefix("function/0/")
-        url.startsWith("//") -> "https:$url"
-        else -> url
+    private fun cln(url: String): String {
+        val decoded = when {
+            url.startsWith("function/0/") -> {
+                try {
+                    val base64 = url.removePrefix("function/0/")
+                    Base64.decode(base64, Base64.DEFAULT).toString(Charsets.UTF_8)
+                } catch (_: Exception) { url.removePrefix("function/0/") }
+            }
+            else -> url
+        }
+        return when {
+            decoded.startsWith("//") -> "https:$decoded"
+            decoded.startsWith("https/") -> "https://${decoded.removePrefix("https/")}"
+            else -> decoded
+        }
     }
 
     private suspend fun lnk(url: String, quality: String, callback: (ExtractorLink) -> Unit) {
