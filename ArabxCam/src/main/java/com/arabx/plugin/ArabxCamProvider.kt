@@ -91,11 +91,11 @@ class ArabxCamProvider : MainAPI() {
             Log.d(TAG, "iframes: ${doc.select("iframe[src]").joinToString(" | ") { it.attr("src") }}")
             Log.d(TAG, "embeds: ${doc.select("embed[src]").joinToString(" | ") { it.attr("src") }}")
             Log.d(TAG, "og:video: ${doc.select("meta[property=og:video], meta[property='og:video:url'], meta[property=og:video:secure_url]").joinToString(" | ") { it.attr("content") }}")
+            Log.d(TAG, "tw:player: ${doc.select("meta[name='twitter:player']").joinToString(" | ") { it.attr("content") }}")
             Log.d(TAG, "playerEls: ${doc.select("[class*=player], [id*=player], .player-wrap, .video-player, #player_wrapper, #player").joinToString(" | ") { it.tagName() + ":" + (it.attr("class") ?: it.attr("id")) }}")
             Log.d(TAG, "ptitle: ${doc.select(".player, .video-info, .video-title, h1").firstOrNull()?.text()?.take(60)}")
 
-            // Method 1: flashvars (KVS) — skip broken get_file links (403).
-            // Do NOT return early: iframe/direct URLs may hold the real working link.
+            // Method 1: flashvars on the detail page itself (KVS pages embed flashvars inline)
             val flashScripts = doc.select("script").filter { it.html().contains("flashvars") }
             Log.d(TAG, "flashvars scripts=${flashScripts.size}")
             flashScripts.forEach { element ->
@@ -104,10 +104,10 @@ class ArabxCamProvider : MainAPI() {
                     listOf(
                         rgx(script, "video_url") to (rgx(script, "video_url_text") ?: "360p"),
                         rgx(script, "video_alt_url") to (rgx(script, "video_alt_url_text") ?: "480p"),
-                        rgx(script, "video_alt_url2") to (rgx(script, "video_alt_url2_text") ?: "720p")
+                        rgx(script, "video_alt_url2") to (rgx(script, "video_alt_url2_text") ?: "720p"),
+                        rgx(script, "video_hd_url") to (rgx(script, "video_hd_url_text") ?: "1080p")
                     ).forEach { (url, q) ->
-                        if (url != null && !url.contains("get_file")) {
-                            // Ensure quality label has "p" suffix (e.g. "480" -> "480p")
+                        if (url != null && url.isNotBlank() && isWorkingGetFile(url)) {
                             val quality = if (q.matches(Regex("\\d+"))) "${q}p" else q
                             lnk(url, quality, callback)
                             found = true
@@ -116,17 +116,54 @@ class ArabxCamProvider : MainAPI() {
                 }
             }
 
-            // Method 2: iframe embed → delegate to PlayerIzExtractor (handles obfuscated eval JS)
-            val iframe = doc.selectFirst("div.embed-wrap iframe")
-            if (iframe != null) {
-                val iframeUrl = iframe.attr("src")
-                Log.d(TAG, "iframe src=$iframeUrl")
-                if (iframeUrl.isNotBlank()) {
-                    loadExtractor(iframeUrl, data, subtitleCallback, callback)
+            // Method 2a: cookie destroyed get_file links (actual video host) — skip for now,
+            // handled via embed page below.
+
+            // Method 2: iframe embed (not limited to div.embed-wrap) / twitter:player →
+            //      fetch the embed page, parse its flashvars, emit get_file links.
+            //      local /embed/<id> -> KVS player (video_url/video_alt_url/video_hd_url)
+            //      remote embed (playeriz etc.) -> delegate to PlayerIzExtractor.
+            val embedUrl = doc.select("iframe[src]").map { it.attr("src") }
+                .firstOrNull { it.isNotBlank() }
+                ?: doc.selectFirst("meta[name='twitter:player']")?.attr("content")
+            if (embedUrl != null) {
+                Log.d(TAG, "embedUrl=$embedUrl")
+                val resolved = fixUrl(embedUrl)
+                if (resolved.contains("/embed/") && resolved.contains(mainUrl.removePrefix("https://").substringBefore("."))) {
+                    // local KVS embed page (https://www.arabx.cam/embed/<id>)
+                    try {
+                        val embedDoc = app.get(resolved, referer = data).document
+                        val eScripts = embedDoc.select("script").filter { it.html().contains("flashvars") }
+                        Log.d(TAG, "embed flashvars=${eScripts.size}")
+                        eScripts.forEach { element ->
+                            val script = element.html()
+                            if (script.contains("flashvars")) {
+                                listOf(
+                                    rgx(script, "video_url") to (rgx(script, "video_url_text") ?: "360p"),
+                                    rgx(script, "video_alt_url") to (rgx(script, "video_alt_url_text") ?: "480p"),
+                                    rgx(script, "video_alt_url2") to (rgx(script, "video_alt_url2_text") ?: "720p"),
+                                    rgx(script, "video_hd_url") to (rgx(script, "video_hd_url_text") ?: "1080p")
+                                ).forEach { (url, q) ->
+                                    if (url != null && url.isNotBlank() && isWorkingGetFile(url)) {
+                                        val quality = if (q.matches(Regex("\\d+"))) "${q}p" else q
+                                        lnk(url, quality, callback)
+                                        found = true
+                                    }
+                                }
+                            }
+                        }
+                        if (found) return true
+                    } catch (e: Exception) {
+                        Log.d(TAG, "embed fetch exception: ${e.message}")
+                    }
+                } else {
+                    // remote embed (playeriz etc.) → extractor
+                    Log.d(TAG, "delegating to extractor: $resolved")
+                    loadExtractor(resolved, data, subtitleCallback, callback)
                     return true
                 }
             } else {
-                Log.d(TAG, "no div.embed-wrap iframe")
+                Log.d(TAG, "no iframe/twitter:player on detail page")
             }
 
             // Method 3: HTML5 video sources
@@ -152,8 +189,7 @@ class ArabxCamProvider : MainAPI() {
             if (found) return true
 
             // Method 4: Direct mp4/m3u8 URLs in page text (max.arabx.cam / other hosts)
-            // Scan script contents only (not full HTML) to avoid picking up
-            // broken get_file links already in the DOM from flashvars.
+            // Scan script contents only (not full HTML) to avoid picking up broken links.
             val scriptTexts = doc.select("script").joinToString("\n") { it.data() }
             val directUrls = Regex("""https?://[^\s"'<>]+(?:\.mp4|m3u8)[^\s"'<>]*""")
                 .findAll(scriptTexts).map { it.value }.distinct()
@@ -179,6 +215,11 @@ class ArabxCamProvider : MainAPI() {
             Log.d(TAG, "loadLinks done found=$found")
             found
         } catch (e: Exception) { Log.d(TAG, "loadLinks EXCEPTION ${e::class.simpleName}: ${e.message}"); false }
+    }
+
+    /** A get_file link works when it carries the md5 hash (get_file/1/<md5>/3000/...) — those 302-redirect to max.arabx.cam MP4s. */
+    private fun isWorkingGetFile(url: String): Boolean {
+        return !url.contains("get_file") || Regex("""get_file/1/[a-f0-9]{32}/3000/""").containsMatchIn(url)
     }
 
     private fun rgx(script: String, key: String): String? {
