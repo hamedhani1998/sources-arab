@@ -87,6 +87,13 @@ class ArabxCamProvider : MainAPI() {
             val doc = app.get(data, referer = mainUrl).document
             var found = false
 
+            // Diagnostic: log page structure to find where the real player is
+            Log.d(TAG, "iframes: ${doc.select("iframe[src]").joinToString(" | ") { it.attr("src") }}")
+            Log.d(TAG, "embeds: ${doc.select("embed[src]").joinToString(" | ") { it.attr("src") }}")
+            Log.d(TAG, "og:video: ${doc.select("meta[property=og:video], meta[property='og:video:url'], meta[property=og:video:secure_url]").joinToString(" | ") { it.attr("content") }}")
+            Log.d(TAG, "playerEls: ${doc.select("[class*=player], [id*=player], .player-wrap, .video-player, #player_wrapper, #player").joinToString(" | ") { it.tagName() + ":" + (it.attr("class") ?: it.attr("id")) }}")
+            Log.d(TAG, "ptitle: ${doc.select(".player, .video-info, .video-title, h1").firstOrNull()?.text()?.take(60)}")
+
             // Method 1: flashvars (KVS) — skip broken get_file links (403).
             // Do NOT return early: iframe/direct URLs may hold the real working link.
             val flashScripts = doc.select("script").filter { it.html().contains("flashvars") }
