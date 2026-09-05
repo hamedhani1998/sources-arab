@@ -4,10 +4,6 @@ import android.util.Base64
 import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.Response
-import java.util.concurrent.TimeUnit
 
 class ArabxCamProvider : MainAPI() {
     private val TAG = "ArabxCam"
@@ -271,47 +267,11 @@ class ArabxCamProvider : MainAPI() {
 
     private suspend fun lnk(url: String, quality: String, callback: (ExtractorLink) -> Unit) {
         val direct = cln(url)
-        val resolved = followToFinal(direct)
-        Log.d(TAG, "lnk resolved -> ${resolved.take(70)} (orig=${direct.take(60)})")
         val t = System.currentTimeMillis()
-        // If followToFinal produced a remote_control.php URL, pass the pure get_file URL instead
-        // so the player follows the same-origin 302 itself (it sends the referer automatically).
-        val finalUrl = if (resolved.contains("remote_control.php") && direct.contains("www.arabx.cam"))
-            direct else resolved
         callback(newExtractorLink(
-            source = name, name = name, url = finalUrl, type = ExtractorLinkType.VIDEO
+            source = name, name = name, url = direct, type = ExtractorLinkType.VIDEO
         ) { this.referer = mainUrl; this.quality = getQualityFromName(quality) })
-        Log.d(TAG, "lnk callback took ${System.currentTimeMillis() - t}ms q=$quality url=${finalUrl.take(60)}")
-    }
-
-    /** Resolve a get_file 302 to its true media URL (max.arabx.cam/remote_control.php). Only
- *  follows the redirect headers — never downloads the body — so the protected host's data
- *  stream is left to the player, which sends Range requests properly. */
-    private fun followToFinal(url: String): String {
-        if (url.isBlank()) return url
-        if (!url.contains("get_file/")) return url
-        return try {
-            val client = OkHttpClient.Builder()
-                .connectTimeout(2, TimeUnit.SECONDS)
-                .readTimeout(2, TimeUnit.SECONDS)
-                .callTimeout(4, TimeUnit.SECONDS)
-                .followRedirects(false)
-                .followSslRedirects(false)
-                .build()
-            val res: Response = client.newCall(
-                Request.Builder().url(url)
-                    .header("Referer", mainUrl)
-                    .header("User-Agent", "Mozilla/5.0")
-                    .header("Range", "bytes=0-0")
-                    .method("GET", null).build()
-            ).execute()
-            val loc = res.header("Location") ?: res.request.url.toString()
-            res.close()
-            if (loc.contains("remote_control.php") || loc.contains(".mp4") || loc.contains(".m3u8")) loc else url
-        } catch (e: Exception) {
-            Log.d(TAG, "followToFinal fail: ${e.message}")
-            url
-        }
+        Log.d(TAG, "lnk emitted ${quality} in ${System.currentTimeMillis() - t}ms url=${direct.take(70)}")
     }
 
     private fun fixUrl(url: String): String = when {
