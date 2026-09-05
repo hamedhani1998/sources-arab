@@ -270,13 +270,18 @@ class ArabxCamProvider : MainAPI() {
     }
 
     private suspend fun lnk(url: String, quality: String, callback: (ExtractorLink) -> Unit) {
-        val resolved = followToFinal(cln(url))
-        Log.d(TAG, "lnk resolved -> ${resolved.take(70)} (orig=${cln(url).take(60)})")
+        val direct = cln(url)
+        val resolved = followToFinal(direct)
+        Log.d(TAG, "lnk resolved -> ${resolved.take(70)} (orig=${direct.take(60)})")
         val t = System.currentTimeMillis()
+        // If followToFinal produced a remote_control.php URL, pass the pure get_file URL instead
+        // so the player follows the same-origin 302 itself (it sends the referer automatically).
+        val finalUrl = if (resolved.contains("remote_control.php") && direct.contains("www.arabx.cam"))
+            direct else resolved
         callback(newExtractorLink(
-            source = name, name = name, url = resolved, type = ExtractorLinkType.VIDEO
+            source = name, name = name, url = finalUrl, type = ExtractorLinkType.VIDEO
         ) { this.referer = mainUrl; this.quality = getQualityFromName(quality) })
-        Log.d(TAG, "lnk callback took ${System.currentTimeMillis() - t}ms q=$quality")
+        Log.d(TAG, "lnk callback took ${System.currentTimeMillis() - t}ms q=$quality url=${finalUrl.take(60)}")
     }
 
     /** Resolve a get_file 302 to its true media URL (max.arabx.cam/remote_control.php). Only
@@ -287,8 +292,9 @@ class ArabxCamProvider : MainAPI() {
         if (!url.contains("get_file/")) return url
         return try {
             val client = OkHttpClient.Builder()
-                .connectTimeout(5, TimeUnit.SECONDS)
-                .readTimeout(5, TimeUnit.SECONDS)
+                .connectTimeout(2, TimeUnit.SECONDS)
+                .readTimeout(2, TimeUnit.SECONDS)
+                .callTimeout(4, TimeUnit.SECONDS)
                 .followRedirects(false)
                 .followSslRedirects(false)
                 .build()
