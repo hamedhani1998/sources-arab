@@ -118,14 +118,18 @@ class ArabxCamProvider : MainAPI() {
                         rgx(script, "video_alt_url2") to (rgx(script, "video_alt_url2_text") ?: "720p"),
                         rgx(script, "video_hd_url") to (rgx(script, "video_hd_url_text") ?: "1080p")
                     ).forEach { (url, q) ->
+                        Log.d(TAG, "M1 cand: url=${url?.take(70)} ok=${url != null && url.isNotBlank() && isWorkingGetFile(url.orEmpty())}")
                         if (url != null && url.isNotBlank() && isWorkingGetFile(url)) {
                             val quality = if (q.matches(Regex("\\d+"))) "${q}p" else q
+                            Log.d(TAG, "M1 emitting $quality")
                             lnk(url, quality, callback)
                             found = true
+                            Log.d(TAG, "M1 emitted $quality")
                         }
                     }
                 }
             }
+            Log.d(TAG, "M1 loop done found=$found")
 
             // Method 2a: cookie destroyed get_file links (actual video host) — skip for now,
             // handled via embed page below.
@@ -157,14 +161,18 @@ class ArabxCamProvider : MainAPI() {
                                     rgx(script, "video_alt_url2") to (rgx(script, "video_alt_url2_text") ?: "720p"),
                                     rgx(script, "video_hd_url") to (rgx(script, "video_hd_url_text") ?: "1080p")
                                 ).forEach { (url, q) ->
+                                    Log.d(TAG, "embed link cand: url=${url?.take(80)} ok=${url != null && url.isNotBlank() && isWorkingGetFile(url.orEmpty())}")
                                     if (url != null && url.isNotBlank() && isWorkingGetFile(url)) {
                                         val quality = if (q.matches(Regex("\\d+"))) "${q}p" else q
+                                        Log.d(TAG, "embed emitting link $quality")
                                         lnk(url, quality, callback)
                                         found = true
+                                        Log.d(TAG, "embed emitted link $quality")
                                     }
                                 }
                             }
                         }
+                        Log.d(TAG, "embed loop done found=$found")
                         if (found) return true
                     } catch (e: Exception) {
                         Log.d(TAG, "embed fetch exception: ${e.message}")
@@ -258,9 +266,11 @@ class ArabxCamProvider : MainAPI() {
     }
 
     private suspend fun lnk(url: String, quality: String, callback: (ExtractorLink) -> Unit) {
+        val t = System.currentTimeMillis()
         callback(newExtractorLink(
             source = name, name = name, url = cln(url), type = ExtractorLinkType.VIDEO
         ) { this.referer = mainUrl; this.quality = getQualityFromName(quality) })
+        Log.d(TAG, "lnk callback took ${System.currentTimeMillis() - t}ms q=$quality url=${cln(url).take(60)}")
     }
 
     private fun fixUrl(url: String): String = when {
