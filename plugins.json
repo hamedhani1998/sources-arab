@@ -40,7 +40,7 @@
  {
   "apiVersion": 1,
   "repositoryUrl": "https://github.com/hamedhani1998/sources-arab",
-  "fileSize": 27750,
+  "fileSize": 27694,
   "status": 1,
   "language": "ar",
   "authors": [
@@ -49,7 +49,7 @@
   "tvTypes": [
    "NSFW"
   ],
-  "version": 15,
+  "version": 16,
   "internalName": "ArabxCam",
   "description": "ArabX - أفلام إباحية عربية",
   "url": "https://github.com/hamedhani1998/sources-arab/raw/refs/heads/main/build/ArabxCam.cs3",

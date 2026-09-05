@@ -106,30 +106,32 @@ class ArabxCamProvider : MainAPI() {
             Log.d(TAG, "playerEls: ${doc.select("[class*=player], [id*=player], .player-wrap, .video-player, #player_wrapper, #player").joinToString(" | ") { it.tagName() + ":" + (it.attr("class") ?: it.attr("id")) }}")
             Log.d(TAG, "ptitle: ${doc.select(".player, .video-info, .video-title, h1").firstOrNull()?.text()?.take(60)}")
 
-            // Method 1: flashvars on the detail page itself (KVS pages embed flashvars inline)
-            val flashScripts = doc.select("script").filter { it.html().contains("flashvars") }
-            Log.d(TAG, "flashvars scripts=${flashScripts.size}")
-            flashScripts.forEach { element ->
-                val script = element.html()
-                if (script.contains("flashvars")) {
-                    listOf(
-                        rgx(script, "video_url") to (rgx(script, "video_url_text") ?: "360p"),
-                        rgx(script, "video_alt_url") to (rgx(script, "video_alt_url_text") ?: "480p"),
-                        rgx(script, "video_alt_url2") to (rgx(script, "video_alt_url2_text") ?: "720p"),
-                        rgx(script, "video_hd_url") to (rgx(script, "video_hd_url_text") ?: "1080p")
-                    ).forEach { (url, q) ->
-                        Log.d(TAG, "M1 cand: url=${url?.take(70)} ok=${url != null && url.isNotBlank() && isWorkingGetFile(url.orEmpty())}")
-                        if (url != null && url.isNotBlank() && isWorkingGetFile(url)) {
-                            val quality = if (q.matches(Regex("\\d+"))) "${q}p" else q
-                            Log.d(TAG, "M1 emitting $quality")
-                            lnk(url, quality, callback)
-                            found = true
-                            Log.d(TAG, "M1 emitted $quality")
-                        }
+            // Method 1: video links on the detail page itself (KVS pages embed flashvars-like
+            // scripts that may NOT literally contain the word "flashvars"). Grab any script that
+            // holds video_url/video_alt_url/video_alt_url2/video_hd_url and emit them straight
+            // from the detail document — this avoids an extra /embed request (faster).
+            val candScript = doc.select("script").map { it.html() }
+                .firstOrNull { it.contains("video_url") && it.contains("get_file") }
+            Log.d(TAG, "detail script with video_url=${candScript != null}")
+            if (candScript != null) {
+                listOf(
+                    rgx(candScript, "video_url") to (rgx(candScript, "video_url_text") ?: "360p"),
+                    rgx(candScript, "video_alt_url") to (rgx(candScript, "video_alt_url_text") ?: "480p"),
+                    rgx(candScript, "video_alt_url2") to (rgx(candScript, "video_alt_url2_text") ?: "720p"),
+                    rgx(candScript, "video_hd_url") to (rgx(candScript, "video_hd_url_text") ?: "1080p")
+                ).forEach { (url, q) ->
+                    Log.d(TAG, "M1 cand: url=${url?.take(70)} ok=${url != null && url.isNotBlank() && isWorkingGetFile(url.orEmpty())}")
+                    if (url != null && url.isNotBlank() && isWorkingGetFile(url)) {
+                        val quality = if (q.matches(Regex("\\d+"))) "${q}p" else q
+                        Log.d(TAG, "M1 emitting $quality")
+                        lnk(url, quality, callback)
+                        found = true
+                        Log.d(TAG, "M1 emitted $quality")
                     }
                 }
             }
             Log.d(TAG, "M1 loop done found=$found")
+            if (found) return true
 
             // Method 2a: cookie destroyed get_file links (actual video host) — skip for now,
             // handled via embed page below.
