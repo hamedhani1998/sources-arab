@@ -4,6 +4,10 @@ import android.util.Base64
 import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import java.util.concurrent.TimeUnit
 
 class ArabxCamProvider : MainAPI() {
     private val TAG = "ArabxCam"
@@ -269,11 +273,40 @@ class ArabxCamProvider : MainAPI() {
 
     private suspend fun lnk(url: String, quality: String, callback: (ExtractorLink) -> Unit) {
         val direct = cln(url)
+        // For KVS get_file links: resolve to the ultimate media host once (fast, no body)
+        // and send that, so the player doesn't follow an extra 302 hop (which stalls start).
+        val finalUrl = resolveForPlayer(direct)
         val t = System.currentTimeMillis()
         callback(newExtractorLink(
-            source = name, name = name, url = direct, type = ExtractorLinkType.VIDEO
+            source = name, name = name, url = finalUrl, type = ExtractorLinkType.VIDEO
         ) { this.referer = mainUrl; this.quality = getQualityFromName(quality) })
-        Log.d(TAG, "lnk emitted ${quality} in ${System.currentTimeMillis() - t}ms url=${direct.take(70)}")
+        Log.d(TAG, "lnk emitted ${quality} in ${System.currentTimeMillis() - t}ms url=${finalUrl.take(70)}")
+    }
+
+    /** Fast-follow a get_file 302 (if any) to its direct MP4 and hand that to the player.
+     *  Never downloads the body — only reads the Location header. Timeouts are short. */
+    private suspend fun resolveForPlayer(url: String): String {
+        if (!url.contains("get_file/")) return url
+        return try {
+            val client = OkHttpClient.Builder()
+                .connectTimeout(3, TimeUnit.SECONDS)
+                .readTimeout(3, TimeUnit.SECONDS)
+                .followRedirects(false)
+                .build()
+            val res: Response = client.newCall(
+                Request.Builder().url(url)
+                    .header("Referer", mainUrl)
+                    .header("User-Agent", "Mozilla/5.0")
+                    .header("Range", "bytes=0-0")
+                    .build()
+            ).execute()
+            val loc = res.header("Location") ?: res.request.url.toString()
+            res.close()
+            if (loc.contains("remote_control.php") || loc.contains(".mp4")) loc else url
+        } catch (e: Exception) {
+            Log.d(TAG, "resolveForPlayer fail: ${e.message}")
+            url
+        }
     }
 
     private fun fixUrl(url: String): String = when {
