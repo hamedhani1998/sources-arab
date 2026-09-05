@@ -27,7 +27,9 @@ class ArabxCamProvider : MainAPI() {
         return try {
             val url = "$mainUrl/${request.data}${if (page > 1) "page/$page/" else ""}"
             Log.d(TAG, "getMainPage url=$url")
+            val tG = System.currentTimeMillis()
             val doc = app.get(url, referer = mainUrl).document
+            Log.d(TAG, "getMainPage doc in ${System.currentTimeMillis() - tG}ms")
             val items = doc.select("div.item").mapNotNull { item ->
                 try {
                     val a = item.selectFirst("a") ?: return@mapNotNull null
@@ -63,19 +65,26 @@ class ArabxCamProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse? {
         return try {
+            val t0 = System.currentTimeMillis()
+            Log.d(TAG, "load start url=$url")
             val doc = app.get(url, referer = mainUrl).document
+            Log.d(TAG, "load got doc in ${System.currentTimeMillis() - t0}ms")
             val title = doc.selectFirst("h1.htitle")?.text()?.trim()
                 ?: doc.selectFirst("meta[property=og:title]")?.attr("content")
                 ?: doc.title().substringBefore(" -").trim()
             val poster = doc.selectFirst("meta[property=og:image]")?.attr("content")
             val description = doc.selectFirst("meta[name=description]")?.attr("content")
             val tags = doc.select("meta[name=keywords]")?.attr("content")?.split(",")?.map { it.trim() }?.take(6)
+            Log.d(TAG, "load done in ${System.currentTimeMillis() - t0}ms title=$title")
             newMovieLoadResponse(title, url, TvType.NSFW, url) {
                 this.posterUrl = poster
                 this.plot = description
                 this.tags = tags
             }
-        } catch (_: Exception) { null }
+        } catch (e: Exception) {
+            Log.d(TAG, "load EXCEPTION ${e::class.simpleName}: ${e.message}")
+            null
+        }
     }
 
     override suspend fun loadLinks(
@@ -84,7 +93,9 @@ class ArabxCamProvider : MainAPI() {
     ): Boolean {
         return try {
             Log.d(TAG, "loadLinks data=$data")
+            val tLL = System.currentTimeMillis()
             val doc = app.get(data, referer = mainUrl).document
+            Log.d(TAG, "loadLinks detail doc in ${System.currentTimeMillis() - tLL}ms")
             var found = false
 
             // Diagnostic: log page structure to find where the real player is
@@ -132,7 +143,9 @@ class ArabxCamProvider : MainAPI() {
                 if (resolved.contains("/embed/") && resolved.contains(mainUrl.removePrefix("https://").substringBefore("."))) {
                     // local KVS embed page (https://www.arabx.cam/embed/<id>)
                     try {
-                        val embedDoc = app.get(resolved, referer = data).document
+                        val tE = System.currentTimeMillis()
+                        val embedDoc = app.get(resolved, referer = mainUrl).document
+                        Log.d(TAG, "embed fetched in ${System.currentTimeMillis() - tE}ms")
                         val eScripts = embedDoc.select("script").filter { it.html().contains("flashvars") }
                         Log.d(TAG, "embed flashvars=${eScripts.size}")
                         eScripts.forEach { element ->
